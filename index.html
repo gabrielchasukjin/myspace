@@ -86,28 +86,6 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             border: 2px solid #88b9ae;
         }
-        #exit-button {
-            position: absolute;
-            bottom: 15px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #ff6b6b;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 12px;
-            font-family: 'Quicksand', sans-serif;
-            font-weight: 600;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            border: none;
-            cursor: pointer;
-            display: none;
-            z-index: 100;
-            transition: all 0.2s ease;
-        }
-        #exit-button:hover {
-            background: #e74c3c;
-            transform: translateX(-50%) scale(1.05);
-        }
     </style>
 </head>
 <body>
@@ -125,7 +103,6 @@
         <span id="progress" style="color: #557571;">0%</span>
     </div>
     <div id="tooltip"></div>
-    <button id="exit-button">Exit Focused View</button>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -149,8 +126,6 @@
         let floatingStars = []; // Array to hold floating stars
         let gridBox; // Reference to the grid box
         let spotlights = []; // Array to hold moving spotlights
-        let isFocusedView = false; // Track if we're in focused view mode
-        let focusedPlane = null; // Track which plane is focused
 
         // Define cluster colors - Animal Crossing inspired palette
         const clusterColors = [
@@ -257,9 +232,7 @@
             window.addEventListener('resize', onWindowResize);
             document.getElementById('reset-camera').addEventListener('click', resetCamera);
             document.getElementById('toggle-rotation').addEventListener('click', toggleRotation);
-            document.getElementById('exit-button').addEventListener('click', exitFocusedView);
             window.addEventListener('mousemove', onMouseMove);
-            window.addEventListener('click', onMouseClick);
 
             // Start animation loop
             animate();
@@ -747,16 +720,20 @@
             tooltipElement.style.top = event.clientY + 10 + 'px';
         }
 
-        // Handle mouse click for focusing on images
-        function onMouseClick(event) {
-            // Skip if we're already in focused view
-            if (isFocusedView) return;
-            
+        // Check for object intersection with mouse ray
+        function checkIntersection() {
             // Update the picking ray with the camera and mouse position
             raycaster.setFromCamera(mouse, camera);
             
             // Calculate objects intersecting the picking ray
             const intersects = raycaster.intersectObjects(scene.children);
+            
+            // Reset previously selected object
+            if (selectedObject) {
+                selectedObject.material.opacity = 0.9; // Reset to normal opacity
+                selectedObject = null;
+                tooltipElement.style.display = 'none';
+            }
             
             // Handle new intersection if any
             if (intersects.length > 0) {
@@ -766,139 +743,65 @@
                 );
                 
                 if (intersectedObject) {
-                    const clickedPlane = intersectedObject.object;
-                    focusOnImage(clickedPlane);
+                    selectedObject = intersectedObject.object;
+                    
+                    // Highlight the object by increasing opacity
+                    selectedObject.material.opacity = 1.0;
+                    
+                    // Show tooltip with file path
+                    tooltipElement.textContent = selectedObject.userData.path;
+                    tooltipElement.style.display = 'block';
+                    
+                    // Add a bounce animation when selected
+                    gsap.to(selectedObject.scale, {
+                        x: 1.1, 
+                        y: 1.1, 
+                        z: 1.1, 
+                        duration: 0.3,
+                        yoyo: true,
+                        repeat: 1
+                    });
                 }
             }
         }
-        
-        // Focus on a specific image
-        function focusOnImage(plane) {
-            isFocusedView = true;
-            focusedPlane = plane;
-            
-            // Find the corresponding frame for this plane
-            let focusedFrame = null;
-            imagePlanes.forEach(({plane: p, frame: f}) => {
-                if (p === plane) {
-                    focusedFrame = f;
-                }
-            });
-            
-            // Store original camera position for later
-            const originalCameraPosition = camera.position.clone();
-            const originalCameraTarget = controls.target.clone();
-            
-            // Get image position
-            const imagePosition = plane.position.clone();
-            
-            // Calculate a position slightly in front of the plane
-            const direction = new THREE.Vector3().subVectors(imagePosition, camera.position).normalize();
-            const targetPosition = imagePosition.clone().sub(direction.multiplyScalar(0.9)); // Adjusted from 0.7 to 0.9 for less zoom
-            
-            // Disable controls during animation
-            controls.enabled = false;
-            
-            // Animate camera to new position
-            gsap.to(camera.position, {
-                x: targetPosition.x,
-                y: targetPosition.y,
-                z: targetPosition.z,
-                duration: 2,
-                ease: "power2.inOut",
-                onUpdate: function() {
-                    // Always look at the image during animation
-                    camera.lookAt(imagePosition);
-                },
-                onComplete: function() {
-                    // Set controls target to the image
-                    controls.target.copy(imagePosition);
-                    controls.enabled = true;
-                    
-                    // Stop auto rotation
-                    if (autoRotate) {
-                        autoRotate = false;
-                        document.getElementById('toggle-rotation').innerHTML = 'Toggle Spin';
-                    }
-                }
-            });
-            
-            // Make all other images transparent and hide their frames
-            imagePlanes.forEach(({plane: p, frame: f}) => {
-                if (p !== plane) {
-                    // Make image nearly transparent
-                    gsap.to(p.material, {
-                        opacity: 0.01,
-                        duration: 1.5
-                    });
-                    
-                    // Completely hide the frame
-                    f.visible = false;
-                } else {
-                    // Make the selected image stand out
-                    gsap.to(p.material, {
-                        opacity: 1,
-                        duration: 1
-                    });
-                    
-                    // Ensure frame is visible
-                    f.visible = true;
-                    gsap.to(f.material, {
-                        opacity: 1,
-                        duration: 1
-                    });
-                }
-            });
-            
-            // Show exit button
-            document.getElementById('exit-button').style.display = 'block';
-            
-            // Hide tooltip
-            tooltipElement.style.display = 'none';
+
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
-        
-        // Exit focused view mode
-        function exitFocusedView() {
-            if (!isFocusedView) return;
+
+        // Reset camera position
+        function resetCamera() {
+            // Always reset camera target to origin
+            controls.target.set(0, 0, 0);
             
-            isFocusedView = false;
-            focusedPlane = null;
-            
-            // Animate camera back to original position
+            // Always reset camera to original position
+            gsap.killTweensOf(camera.position); // Kill any ongoing camera animations
             gsap.to(camera.position, {
                 x: 0,
-                y: 0,
+                y: 0, 
                 z: 3,
-                duration: 2,
-                ease: "power2.inOut"
+                duration: 1,
+                ease: "elastic.out(1, 0.5)"
             });
             
-            // Reset controls target
-            gsap.to(controls.target, {
+            // Reset scene rotation
+            gsap.to(scene.rotation, {
                 x: 0,
                 y: 0,
                 z: 0,
-                duration: 2,
+                duration: 1,
                 ease: "power2.inOut"
             });
-            
-            // Restore opacity of all images and show all frames
-            imagePlanes.forEach(({plane, frame}) => {
-                gsap.to(plane.material, {
-                    opacity: 0.9,
-                    duration: 1.5
-                });
-                
-                // Make all frames visible again
-                frame.visible = true;
-                gsap.to(frame.material, {
-                    opacity: 1,
-                    duration: 1.5
-                });
-            });
-            
-            // Hide exit button
-            document.getElementById('exit-button').style.display = 'none';
+        }
+
+        // Toggle auto-rotation
+        function toggleRotation() {
+            autoRotate = !autoRotate;
+            const button = document.getElementById('toggle-rotation');
+            button.innerHTML = autoRotate ? 'Stop Spin' : 'Toggle Spin';
         }
 
         // Update loading progress indicator
@@ -1012,103 +915,6 @@
             checkIntersection();
             
             renderer.render(scene, camera);
-        }
-
-        // Check for object intersection with mouse ray
-        function checkIntersection() {
-            // Update the picking ray with the camera and mouse position
-            raycaster.setFromCamera(mouse, camera);
-            
-            // Calculate objects intersecting the picking ray
-            const intersects = raycaster.intersectObjects(scene.children);
-            
-            // Reset previously selected object
-            if (selectedObject) {
-                selectedObject.material.opacity = 0.9; // Reset to normal opacity
-                
-                // If we're in focused view mode and this is not the focused plane, make it transparent again
-                if (isFocusedView && selectedObject !== focusedPlane) {
-                    selectedObject.material.opacity = 0; // Complete transparency (was 0.1)
-                }
-                
-                selectedObject = null;
-                tooltipElement.style.display = 'none';
-            }
-            
-            // Handle new intersection if any
-            if (intersects.length > 0) {
-                // Find the first intersected mesh that has user data
-                const intersectedObject = intersects.find(obj => 
-                    obj.object.type === 'Mesh' && obj.object.userData && obj.object.userData.path
-                );
-                
-                if (intersectedObject) {
-                    selectedObject = intersectedObject.object;
-                    
-                    // If we're in focused view, only allow highlighting the focused plane
-                    if (isFocusedView && selectedObject !== focusedPlane) {
-                        // Don't highlight - keep transparent
-                        tooltipElement.style.display = 'none';
-                        return;
-                    }
-                    
-                    // Highlight the object by increasing opacity
-                    selectedObject.material.opacity = 1.0;
-                    
-                    // Show tooltip with file path
-                    tooltipElement.textContent = selectedObject.userData.path;
-                    tooltipElement.style.display = 'block';
-                    
-                    // Add a bounce animation when selected
-                    gsap.to(selectedObject.scale, {
-                        x: 1.1, 
-                        y: 1.1, 
-                        z: 1.1, 
-                        duration: 0.3,
-                        yoyo: true,
-                        repeat: 1
-                    });
-                }
-            }
-        }
-
-        // Handle window resize
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        // Reset camera position
-        function resetCamera() {
-            // Always reset camera target to origin
-            controls.target.set(0, 0, 0);
-            
-            // Always reset camera to original position
-            gsap.killTweensOf(camera.position); // Kill any ongoing camera animations
-            gsap.to(camera.position, {
-                x: 0,
-                y: 0, 
-                z: 3,
-                duration: 1,
-                ease: "elastic.out(1, 0.5)"
-            });
-            
-            // Reset scene rotation
-            gsap.to(scene.rotation, {
-                x: 0,
-                y: 0,
-                z: 0,
-                duration: 1,
-                ease: "power2.inOut"
-            });
-        }
-
-        // Toggle auto-rotation
-        function toggleRotation() {
-            autoRotate = !autoRotate;
-            const button = document.getElementById('toggle-rotation');
-            button.innerHTML = autoRotate ? 'Stop Spin' : 'Toggle Spin';
         }
 
         // Initialize the visualization
